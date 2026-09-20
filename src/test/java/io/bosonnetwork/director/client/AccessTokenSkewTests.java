@@ -28,8 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.URL;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -53,14 +51,18 @@ import io.bosonnetwork.cwt.Claim;
 import io.bosonnetwork.cwt.SignedCwt;
 import io.bosonnetwork.director.client.exceptions.UnauthorizedException;
 import io.bosonnetwork.service.AccessScope;
+import io.bosonnetwork.web.HttpDate;
+import io.bosonnetwork.web.client.AccessTokenSource;
+import io.bosonnetwork.web.client.SelfIssuedAccessTokens;
 
 /**
- * Tests of {@link SelfIssuedTokens} against a stub Director whose clock is set apart from ours. The
- * stub allows no skew at all, so every token it accepts is dated correctly by its clock.
+ * Tests of {@link SelfIssuedAccessTokens} driven through {@link DirectorTransport}, against a stub
+ * Director whose clock is set apart from ours. The stub allows no skew at all, so every token it
+ * accepts is dated correctly by its clock.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class SelfIssuedTokensTests {
-	private static final Logger log = LoggerFactory.getLogger(SelfIssuedTokensTests.class);
+public class AccessTokenSkewTests {
+	private static final Logger log = LoggerFactory.getLogger(AccessTokenSkewTests.class);
 
 	private final Id nodeId = Id.random();
 	private final Signature.KeyPair userKey = Signature.KeyPair.random();
@@ -82,8 +84,7 @@ public class SelfIssuedTokensTests {
 			requests.incrementAndGet();
 			long now = System.currentTimeMillis() + clockOffset;
 			if (sendsDate)
-				req.response().putHeader("Date",
-						DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.ofEpochMilli(now).atZone(ZoneOffset.UTC)));
+				req.response().putHeader("Date", HttpDate.format(Instant.ofEpochMilli(now)));
 
 			boolean accepted = !refusesAll && accepts(req.getHeader("Authorization"), now);
 			req.response().setStatusCode(accepted ? 200 : 401).end(accepted ? "{}" : "Unauthorized");
@@ -147,7 +148,8 @@ public class SelfIssuedTokensTests {
 	@Test
 	void smallSkewIsAbsorbedByBackdating() throws Exception {
 		// Beyond the skew that triggers a correction, but within the backdating.
-		clockOffset = -(SelfIssuedTokens.MAX_CLOCK_SKEW + SelfIssuedTokens.BACKDATE) / 2;
+		clockOffset = -(SelfIssuedAccessTokens.MAX_CLOCK_SKEW.toMillis()
+				+ SelfIssuedAccessTokens.BACKDATE.toMillis()) / 2;
 		withTransport((transport, tokens) -> {
 			assertEquals(200, await(get(transport, tokens)).statusCode());
 			assertEquals(1, requests.get());
@@ -174,14 +176,18 @@ public class SelfIssuedTokensTests {
 	}
 
 	private interface TransportTest {
-		void run(DirectorTransport transport, SelfIssuedTokens tokens) throws Exception;
+		void run(DirectorTransport transport, AccessTokenSource tokens) throws Exception;
 	}
 
 	private void withTransport(TransportTest test) throws Exception {
 		DirectorTransport transport = new DirectorTransport(vertx,
 				new URL("http://127.0.0.1:" + server.actualPort()), "/client", null, null, null, log);
-		SelfIssuedTokens tokens = new SelfIssuedTokens(new CryptoIdentity(userKey), Id.of(userKey.publicKey().bytes()),
-				null, AccessScope.CLIENT.toString(), () -> Future.succeededFuture(nodeId), log);
+		AccessTokenSource tokens = SelfIssuedAccessTokens.builder(new CryptoIdentity(userKey))
+				.subject(Id.of(userKey.publicKey().bytes()))
+				.scope(AccessScope.CLIENT)
+				.audience(nodeId)
+				.logger(log)
+				.build();
 		try {
 			test.run(transport, tokens);
 		} finally {
@@ -189,7 +195,7 @@ public class SelfIssuedTokensTests {
 		}
 	}
 
-	private static Future<DirectorTransport.Response> get(DirectorTransport transport, SelfIssuedTokens tokens) {
+	private static Future<DirectorTransport.Response> get(DirectorTransport transport, AccessTokenSource tokens) {
 		return transport.call(HttpMethod.GET, "/profile", null, tokens);
 	}
 

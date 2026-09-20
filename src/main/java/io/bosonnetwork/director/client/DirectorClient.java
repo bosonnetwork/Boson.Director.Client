@@ -62,6 +62,8 @@ import io.bosonnetwork.director.client.exceptions.RegistrationDisabledException;
 import io.bosonnetwork.json.Json;
 import io.bosonnetwork.service.AccessScope;
 import io.bosonnetwork.web.PaginatedResult;
+import io.bosonnetwork.web.client.AccessTokenSource;
+import io.bosonnetwork.web.client.SelfIssuedAccessTokens;
 
 /**
  * An asynchronous client for the client API of a Boson Director, the account service of a Boson
@@ -171,7 +173,7 @@ public class DirectorClient {
 	private final @Nullable Id deviceId;
 
 	private final DirectorTransport transport;
-	private final SelfIssuedTokens tokens;
+	private final AccessTokenSource tokens;
 
 	private static final Logger log = LoggerFactory.getLogger(DirectorClient.class);
 
@@ -194,8 +196,14 @@ public class DirectorClient {
 		// Tokens are signed with the user key when the client has it: that works before any device is
 		// registered. A device signs its own, naming itself as the client.
 		Signature.KeyPair signer = userKey != null ? userKey : Objects.requireNonNull(deviceKey);
-		this.tokens = new SelfIssuedTokens(new CryptoIdentity(signer), userId, userKey != null ? null : deviceId,
-				AccessScope.CLIENT.toString(), this::resolveNodeId, log);
+		SelfIssuedAccessTokens.Builder tokens = SelfIssuedAccessTokens.builder(new CryptoIdentity(signer))
+				.subject(userId)
+				.scope(AccessScope.CLIENT)
+				.audience(this::resolveNodeId)
+				.logger(log);
+		if (userKey == null)
+			tokens.clientId(Objects.requireNonNull(deviceId));
+		this.tokens = tokens.build();
 	}
 
 	/**

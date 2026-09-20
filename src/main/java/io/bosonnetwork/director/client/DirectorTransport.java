@@ -58,7 +58,9 @@ import io.bosonnetwork.json.Json;
 import io.bosonnetwork.utils.Base58;
 import io.bosonnetwork.utils.Hex;
 import io.bosonnetwork.vertx.ContextualFuture;
+import io.bosonnetwork.web.HttpDate;
 import io.bosonnetwork.web.PaginatedResult;
+import io.bosonnetwork.web.client.AccessTokenSource;
 
 /**
  * The HTTP plumbing shared by {@link DirectorClient} and {@link DirectorAdmin}: the connection pool,
@@ -86,19 +88,6 @@ final class DirectorTransport {
 	private static final String CONTENT_TYPE_JSON = "application/json";
 
 	static final int NOT_MODIFIED = 304;
-
-	/**
-	 * Supplies the access tokens a transport authenticates its requests with.
-	 */
-	interface TokenSource {
-		// Returns a current access token.
-		Future<String> token();
-
-		// Called when the Director rejected the token as unauthorized, with its answer. Returns whether
-		// a new token could succeed where this one failed, in which case the request is repeated once
-		// with it.
-		boolean rejected(String token, Response response);
-	}
 
 	@FunctionalInterface
 	interface BodyParser<T> {
@@ -202,14 +191,14 @@ final class DirectorTransport {
 			throw new IllegalStateException("Client is closed");
 	}
 
-	// Sends a request with an optional JSON body. See call(HttpMethod, String, Buffer, String, TokenSource).
+	// Sends a request with an optional JSON body. See call(HttpMethod, String, Buffer, String, AccessTokenSource).
 	//
 	// Maps cross classes in this package as Map<String, ?> (or ? super Object where they are written to),
 	// never as Map<String, @Nullable Object>: javac before JDK 22 drops type-use annotations on type
 	// arguments it reads from class files, so a build that recompiles only some classes - an IDE's
 	// incremental build - would see Map<String, Object> and fail NullAway, while a full build passes.
 	Future<Response> call(HttpMethod method, String path,
-			@Nullable Map<String, ?> json, @Nullable TokenSource tokens) {
+			@Nullable Map<String, ?> json, @Nullable AccessTokenSource tokens) {
 		return call(method, path, json, tokens, 0);
 	}
 
@@ -217,7 +206,7 @@ final class DirectorTransport {
 	// milliseconds; 0 for the default, REQUEST_IDLE_TIMEOUT. Only a call the Director deliberately holds
 	// open - a long poll - needs more.
 	Future<Response> call(HttpMethod method, String path,
-			@Nullable Map<String, ?> json, @Nullable TokenSource tokens, long idleTimeout) {
+			@Nullable Map<String, ?> json, @Nullable AccessTokenSource tokens, long idleTimeout) {
 		Buffer body = null;
 		if (json != null) {
 			try {
@@ -235,27 +224,29 @@ final class DirectorTransport {
 	// source is sent without credentials. Every API call of both clients goes through here, so adding
 	// one is a method that names its path and decodes its answer.
 	Future<Response> call(HttpMethod method, String path, @Nullable Buffer body,
-			@Nullable String contentType, @Nullable TokenSource tokens) {
+			@Nullable String contentType, @Nullable AccessTokenSource tokens) {
 		return call(method, path, body, contentType, tokens, 0, null);
 	}
 
 	// A conditional GET: asks for a resource the caller holds a copy of, sending that copy's validators
 	// (If-None-Match, If-Modified-Since). A 304 answer succeeds like a 2xx - the copy is current.
-	Future<Response> conditionalGet(String path, MultiMap conditions, @Nullable TokenSource tokens) {
+	Future<Response> conditionalGet(String path, MultiMap conditions, @Nullable AccessTokenSource tokens) {
 		return call(HttpMethod.GET, path, null, null, tokens, 0, conditions);
 	}
 
 	private Future<Response> call(HttpMethod method, String path, @Nullable Buffer body,
-			@Nullable String contentType, @Nullable TokenSource tokens, long idleTimeout,
+			@Nullable String contentType, @Nullable AccessTokenSource tokens, long idleTimeout,
 			@Nullable MultiMap conditions) {
 		Future<Response> response;
 		if (tokens == null) {
 			response = send(method, path, body, contentType, null, idleTimeout, conditions);
 		} else {
-			TokenSource source = tokens;
+			AccessTokenSource source = tokens;
 			response = source.token().compose(t -> send(method, path, body, contentType, t, idleTimeout, conditions)
 					.compose(res -> {
-						if (res.statusCode() != 401 || !source.rejected(t, res))
+						// The date of the refusal is how a client that issues its own tokens learns that
+						// its clock, not its key, is what the Director objected to.
+						if (res.statusCode() != 401 || !source.rejected(t, HttpDate.parse(res.getHeader("Date"))))
 							return Future.succeededFuture(res);
 
 						// Rejected before it was acted on, and the token source can do better: repeat once.

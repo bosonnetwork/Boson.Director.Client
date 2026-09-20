@@ -53,6 +53,8 @@ import io.bosonnetwork.director.client.exceptions.NotFoundException;
 import io.bosonnetwork.json.Json;
 import io.bosonnetwork.service.AccessScope;
 import io.bosonnetwork.web.PaginatedResult;
+import io.bosonnetwork.web.client.AccessTokenSource;
+import io.bosonnetwork.web.client.SelfIssuedAccessTokens;
 
 /**
  * An asynchronous client for the admin API of a Boson Director, the account service of a Boson
@@ -135,7 +137,7 @@ public class DirectorAdmin {
 	private final CryptoIdentity identity;
 
 	private final DirectorTransport transport;
-	private final SelfIssuedTokens tokens;
+	private final AccessTokenSource tokens;
 
 	private static final Logger log = LoggerFactory.getLogger(DirectorAdmin.class);
 
@@ -148,8 +150,12 @@ public class DirectorAdmin {
 		this.transport = new DirectorTransport(vertx, directorUrl, ADMIN_API, nodeId, builder.resolveToAddress, builder.callbackExecutor, log);
 		// Issued by the administrator for itself: the Director accepts a token whose issuer is its
 		// subject, and grants the admin role from the user record, not from the scope claim.
-		this.tokens = new SelfIssuedTokens(identity, identity.getId(), null, AccessScope.ADMIN.toString(),
-				this::resolveNodeId, log);
+		this.tokens = SelfIssuedAccessTokens.builder(identity)
+				.subject(identity.getId())
+				.scope(AccessScope.ADMIN)
+				.audience(this::resolveNodeId)
+				.logger(log)
+				.build();
 	}
 
 	/**
