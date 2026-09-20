@@ -23,6 +23,7 @@
 package io.bosonnetwork.director.client;
 
 import java.net.URL;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import io.bosonnetwork.Id;
 import io.bosonnetwork.crypto.Signature;
 import io.bosonnetwork.utils.Base58;
+import io.bosonnetwork.web.client.AccessTokenSource;
 
 /**
  * An asynchronous client for one OAuth sign-in session on a Boson Director.
@@ -221,14 +223,14 @@ public class DirectorOAuth {
 	}
 
 	// Always the current token; it is the Director's to issue, so a rejection is final.
-	private final DirectorTransport.TokenSource tokens = new DirectorTransport.TokenSource() {
+	private final AccessTokenSource tokens = new AccessTokenSource() {
 		@Override
 		public Future<String> token() {
 			return Future.succeededFuture(sessionToken);
 		}
 
 		@Override
-		public boolean rejected(String token, DirectorTransport.Response response) {
+		public boolean rejected(String token, @Nullable Instant serverDate) {
 			return false;
 		}
 	};
