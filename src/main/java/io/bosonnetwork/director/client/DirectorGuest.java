@@ -206,9 +206,10 @@ public class DirectorGuest {
 	 * session token as a {@code token} parameter, or an {@code error} parameter if the sign-in failed:
 	 * in the query for an app's own scheme, in the fragment for a web page. The Director returns only to
 	 * its own site and to the addresses its {@code oauth.allowedRedirects} configuration allows (by
-	 * default Photon's {@code io.bosonnetwork.photon://auth} and Boson Identity's App Link
-	 * {@code https://bosonnetwork.io/identity/auth}). Continue the sign-in with a
-	 * {@link DirectorOAuth} built with that token. Makes no request.
+	 * default the App Links of Boson Identity, {@code https://bosonnetwork.io/identity/auth}, and Photon,
+	 * {@code https://bosonnetwork.io/photon/auth}); any other app signs in as a community app, with a
+	 * client ID metadata document and PKCE (see the Director's client API docs). Continue the sign-in
+	 * with a {@link DirectorOAuth} built with that token. Makes no request.
 	 *
 	 * @param provider the provider id, as {@link #getProviders()} lists it
 	 * @param redirectUri where the Director sends the browser back to, such as an app's own URI scheme
