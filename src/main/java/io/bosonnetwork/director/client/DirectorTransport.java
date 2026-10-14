@@ -103,6 +103,7 @@ final class DirectorTransport {
 	private final int port;
 	// Where to connect instead of looking up the URL host, or null to look it up.
 	private final @Nullable SocketAddress server;
+	private final Vertx vertx;
 	private final HttpClient httpClient;
 	// Where the clients complete the futures they return, if not where the answer arrives.
 	private final @Nullable Executor callbackExecutor;
@@ -151,6 +152,7 @@ final class DirectorTransport {
 						new HybridTrustManager(nodeId.toString(), nodeId.bytesUnsafe())));
 		}
 
+		this.vertx = vertx;
 		this.httpClient = vertx.createHttpClient(options);
 	}
 
@@ -306,10 +308,11 @@ final class DirectorTransport {
 			conditions.forEach(request::putHeader);
 
 		// The body is read whatever the status: an error's explanation is in it, and a response left
-		// unread would keep its connection out of the pool.
-		return httpClient.request(request)
+		// unread would keep its connection out of the pool. Issued from a Vert.x thread, where the host
+		// lookup may block: see ContextualFuture.callOnVertxThread.
+		return ContextualFuture.callOnVertxThread(vertx, () -> httpClient.request(request)
 				.compose(req -> body != null ? req.send(body) : req.send())
-				.compose(res -> res.body().map(content -> new Response(res.statusCode(), res.headers(), content)));
+				.compose(res -> res.body().map(content -> new Response(res.statusCode(), res.headers(), content))));
 	}
 
 	private Future<Response> checkStatus(HttpMethod method, String path, Response response, boolean conditional) {
